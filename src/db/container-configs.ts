@@ -10,7 +10,15 @@ const SCALAR_COLUMNS = new Set([
   'max_messages_per_prompt',
   'cli_scope',
 ]);
-const JSON_COLUMNS = new Set(['skills', 'mcp_servers', 'packages_apt', 'packages_npm', 'additional_mounts']);
+const JSON_COLUMNS = new Set([
+  'skills',
+  'mcp_servers',
+  'packages_apt',
+  'packages_npm',
+  'additional_mounts',
+  'env',
+  'blocked_hosts',
+]);
 
 export function getContainerConfig(agentGroupId: string): ContainerConfigRow | undefined {
   return getDb().prepare('SELECT * FROM container_configs WHERE agent_group_id = ?').get(agentGroupId) as
@@ -79,10 +87,10 @@ export function updateContainerConfigScalars(
     .run(values);
 }
 
-/** Overwrite a JSON column wholesale. Used for skills, mcp_servers, packages_*, additional_mounts. */
+/** Overwrite a JSON column wholesale. Used for skills, mcp_servers, packages_*, additional_mounts, env, blocked_hosts. */
 export function updateContainerConfigJson(
   agentGroupId: string,
-  column: 'skills' | 'mcp_servers' | 'packages_apt' | 'packages_npm' | 'additional_mounts',
+  column: 'skills' | 'mcp_servers' | 'packages_apt' | 'packages_npm' | 'additional_mounts' | 'env' | 'blocked_hosts',
   value: unknown,
 ): void {
   if (!JSON_COLUMNS.has(column)) throw new Error(`Invalid JSON column: ${column}`);
@@ -90,6 +98,18 @@ export function updateContainerConfigJson(
   getDb()
     .prepare(`UPDATE container_configs SET ${column} = ?, updated_at = ? WHERE agent_group_id = ?`)
     .run(JSON.stringify(value), now, agentGroupId);
+}
+
+/** Update env and blocked_hosts for an existing row. Used by backfill to sync filesystem extras. */
+export function updateContainerConfigExtras(
+  agentGroupId: string,
+  env: Record<string, string>,
+  blockedHosts: string[],
+): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(`UPDATE container_configs SET env = ?, blocked_hosts = ?, updated_at = ? WHERE agent_group_id = ?`)
+    .run(JSON.stringify(env), JSON.stringify(blockedHosts), now, agentGroupId);
 }
 
 export function deleteContainerConfig(agentGroupId: string): void {

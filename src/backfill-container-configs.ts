@@ -11,7 +11,7 @@ import path from 'path';
 import { GROUPS_DIR } from './config.js';
 import type { McpServerConfig, AdditionalMountConfig } from './container-config.js';
 import { getAllAgentGroups } from './db/agent-groups.js';
-import { getContainerConfig, createContainerConfig } from './db/container-configs.js';
+import { getContainerConfig, createContainerConfig, updateContainerConfigExtras } from './db/container-configs.js';
 import { log } from './log.js';
 import type { ContainerConfigRow } from './types.js';
 
@@ -24,6 +24,9 @@ interface LegacyContainerJson {
   provider?: string;
   assistantName?: string;
   maxMessagesPerPrompt?: number;
+  env?: Record<string, string>;
+  blockedHosts?: string[];
+  model?: string;
 }
 
 export function backfillContainerConfigs(): void {
@@ -54,7 +57,7 @@ export function backfillContainerConfigs(): void {
     const row: ContainerConfigRow = {
       agent_group_id: group.id,
       provider,
-      model: null,
+      model: legacy.model ?? null,
       effort: null,
       image_tag: legacy.imageTag ?? null,
       assistant_name: legacy.assistantName ?? null,
@@ -64,6 +67,8 @@ export function backfillContainerConfigs(): void {
       packages_apt: JSON.stringify(legacy.packages?.apt ?? []),
       packages_npm: JSON.stringify(legacy.packages?.npm ?? []),
       additional_mounts: JSON.stringify(legacy.additionalMounts ?? []),
+      env: JSON.stringify(legacy.env ?? {}),
+      blocked_hosts: JSON.stringify(legacy.blockedHosts ?? []),
       cli_scope: 'group',
       updated_at: new Date().toISOString(),
     };
@@ -74,5 +79,36 @@ export function backfillContainerConfigs(): void {
 
   if (backfilled > 0) {
     log.info('Backfilled container_configs from disk', { count: backfilled });
+  }
+
+  // Second pass: sync env + blockedHosts from disk for existing rows that have
+  // these fields in their container.json but whose DB row pre-dates migration 016.
+  let synced = 0;
+  for (const group of groups) {
+    const filePath = path.join(GROUPS_DIR, group.folder, 'container.json');
+    if (!fs.existsSync(filePath)) continue;
+    let legacy: LegacyContainerJson = {};
+    try {
+      legacy = JSON.parse(fs.readFileSync(filePath, 'utf8')) as LegacyContainerJson;
+    } catch {
+      continue;
+    }
+    if (!legacy.env && !legacy.blockedHosts) continue;
+    const row = getContainerConfig(group.id);
+    if (!row) continue;
+    // Only sync if the DB row still has empty/default values for these fields
+    const dbEnvEmpty = !row.env || row.env === '{}';
+    const dbBlockedEmpty = !row.blocked_hosts || row.blocked_hosts === '[]';
+    if (!dbEnvEmpty && !dbBlockedEmpty) continue;
+    try {
+      updateContainerConfigExtras(group.id, legacy.env ?? {}, legacy.blockedHosts ?? []);
+      synced++;
+      log.info('Synced env/blockedHosts from disk container.json', { folder: group.folder });
+    } catch {
+      // Columns may not exist yet if migration hasn't run — ignore
+    }
+  }
+  if (synced > 0) {
+    log.info('Synced container_config extras from disk', { count: synced });
   }
 }
