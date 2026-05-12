@@ -177,6 +177,18 @@ async function main(): Promise<void> {
   // 7. Start the `ncl` CLI socket server (data/ncl.sock).
   await startCliServer();
 
+  // 7b. remindctl MCP bridge (macOS-only, skipped if remindctl not installed).
+  if (process.platform === 'darwin') {
+    try {
+      const { execFileSync } = await import('child_process');
+      execFileSync('which', ['remindctl'], { stdio: 'ignore' });
+      const { startRemindctlBridge } = await import('./remindctl-bridge.js');
+      startRemindctlBridge();
+    } catch {
+      // remindctl not on PATH — skip silently
+    }
+  }
+
   // 8. Dashboard (optional)
   const { readEnvFile } = await import('./env.js');
   const dashboardEnv = readEnvFile(['DASHBOARD_SECRET', 'DASHBOARD_PORT']);
