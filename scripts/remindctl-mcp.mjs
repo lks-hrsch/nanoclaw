@@ -104,7 +104,7 @@ const TOOLS = [
 function run(args) {
   try {
     const cmd = ['remindctl', ...args, '--json', '--no-input'].join(' ');
-    return execSync(cmd, { encoding: 'utf8', timeout: 10000 });
+    return execSync(cmd, { encoding: 'utf8', timeout: 30000 });
   } catch (e) {
     const out = (e.stdout || '').trim();
     const err = (e.stderr || e.message || '').trim();
