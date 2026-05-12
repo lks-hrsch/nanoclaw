@@ -163,6 +163,20 @@ async function main(): Promise<void> {
   startHostSweep();
   log.info('Host sweep started');
 
+  // 7. Dashboard (optional)
+  const { readEnvFile } = await import('./env.js');
+  const dashboardEnv = readEnvFile(['DASHBOARD_SECRET', 'DASHBOARD_PORT']);
+  const dashboardSecret = process.env.DASHBOARD_SECRET || dashboardEnv.DASHBOARD_SECRET;
+  const dashboardPort = parseInt(process.env.DASHBOARD_PORT || dashboardEnv.DASHBOARD_PORT || '3100', 10);
+  if (dashboardSecret) {
+    const { startDashboard } = await import('@nanoco/nanoclaw-dashboard');
+    const { startDashboardPusher } = await import('./dashboard-pusher.js');
+    startDashboard({ port: dashboardPort, secret: dashboardSecret });
+    startDashboardPusher({ port: dashboardPort, secret: dashboardSecret, intervalMs: 60000 });
+  } else {
+    log.info('Dashboard disabled (no DASHBOARD_SECRET)');
+  }
+
   log.info('NanoClaw running');
 }
 

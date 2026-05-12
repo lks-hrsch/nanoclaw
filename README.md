@@ -56,6 +56,38 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 
 </details>
 
+Development (minimal): use the flake devShell with direnv.
+
+Prerequisites:
+
+- Nix with flakes support
+- `direnv` with nix integration (nix-direnv)
+
+Quick start:
+
+```bash
+# install direnv (example)
+brew install direnv
+
+# enable direnv in your shell (zsh example)
+eval "$(direnv hook zsh)"
+
+# in the repo, approve the provided .envrc (activates the flake devShell)
+direnv allow
+
+# or enter manually
+nix develop
+```
+
+Files:
+
+- [flake.nix](flake.nix) — devShell (preferred)
+- [.envrc](.envrc) — direnv helper (uses the flake)
+
+If `direnv allow` fails with a missing attribute (e.g. `nodejs-24_x`), run `git pull` then try again; the flake was adjusted to use `pkgs.nodejs` for broader compatibility.
+
+That's it — the devShell will provide `node` and `pnpm`. Run `pnpm install` or let the shell hook do it on first entry.
+
 ## Philosophy
 
 **Small enough to understand.** One process, a few source files and no microservices. If you want to understand the full NanoClaw codebase, just ask Claude Code to walk you through it.
