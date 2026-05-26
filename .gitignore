@@ -39,3 +39,9 @@ groups/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# nix
+.direnv/
+
+# Macos 
+.DS_Store
