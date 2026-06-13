@@ -96,8 +96,7 @@ export function wakeContainer(session: Session): Promise<boolean> {
   const promise = spawnContainer(session)
     .then(() => true)
     .catch((err) => {
-      const isOneCLIDown =
-        err instanceof Error && err.message.startsWith('OneCLI gateway unreachable');
+      const isOneCLIDown = err instanceof Error && err.message.startsWith('OneCLI gateway unreachable');
       if (isOneCLIDown) {
         log.error('Cannot spawn container — OneCLI down', { sessionId: session.id, hint: err.message });
       } else {
