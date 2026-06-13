@@ -1,6 +1,6 @@
 import type { Migration } from './index.js';
 
-export const migration016: Migration = {
+export const migration016ContainerConfigExtras: Migration = {
   version: 16,
   name: '016-container-config-extras',
   up(db) {
