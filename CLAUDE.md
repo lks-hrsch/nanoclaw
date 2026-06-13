@@ -110,6 +110,11 @@ ncl help
 
 Key files: `src/cli/dispatch.ts` (dispatcher + approval handler), `src/cli/crud.ts` (generic CRUD registration), `src/cli/resources/` (per-resource definitions).
 
+**Destinations gotcha:** Wiring a messaging group to an agent group does NOT auto-create a destination. Without an explicit `ncl destinations add`, the agent routes outbound replies to whatever destination it already knows (e.g., the owner's DM on a different channel). Always add a destination after wiring a new channel:
+```bash
+ncl destinations add --group-id <agent-group-id> --messaging-group-id <mg-id> --local-name <short-name>
+```
+
 ## Channels and Providers (skill-installed)
 
 Trunk does not ship any specific channel adapter or non-default agent provider. The codebase is the registry/infra; the actual adapters and providers live on long-lived sibling branches and get copied in by skills:
@@ -140,6 +145,17 @@ Per-agent-group container runtime config (provider, model, packages, MCP servers
 | `global` | Unrestricted. Set automatically for owner agent groups via `init-first-agent`. |
 
 Key files: `src/db/container-configs.ts`, `src/container-config.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts` (instructions exclusion).
+
+### Updating JSON config columns (`additional_mounts`, `mcp_servers`, etc.)
+
+`ncl groups config-update` only covers scalar fields (provider, model, effort, etc.). To set JSON columns, write directly to the DB:
+
+```bash
+MOUNT_JSON='[{"hostPath":"/abs/path","containerPath":"/workspace/x","readonly":false}]'
+pnpm exec tsx scripts/q.ts data/v2.db "UPDATE container_configs SET additional_mounts = '$MOUNT_JSON', updated_at = datetime('now') WHERE agent_group_id = '<id>'"
+```
+
+**Mount allowlist ≠ mounted:** A path in `~/.config/nanoclaw/mount-allowlist.json` only *permits* a mount. It must also appear in `container_configs.additional_mounts` for the relevant group, and the container must be restarted (`ncl groups restart --id <id>`) to pick it up.
 
 ## Container Restart
 
@@ -243,12 +259,15 @@ Container typecheck is a separate tsconfig — if you edit `container/agent-runn
 Service management:
 ```bash
 # macOS (launchd)
-launchctl load   ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
+# The service label is install-specific (com.nanoclaw-v2-<hash>) — use the helper:
+source setup/lib/install-slug.sh
+launchctl load   ~/Library/LaunchAgents/$(launchd_label).plist
+launchctl unload ~/Library/LaunchAgents/$(launchd_label).plist
+launchctl kickstart -k gui/$(id -u)/$(launchd_label)   # restart
 
 # Linux (systemd)
-systemctl --user start|stop|restart nanoclaw
+source setup/lib/install-slug.sh
+systemctl --user start|stop|restart $(systemd_unit)
 ```
 
 ## Troubleshooting
@@ -262,6 +281,18 @@ Check these first when something goes wrong:
 | Session DBs | `data/v2-sessions/<agent-group>/<session>/` — `inbound.db` (`messages_in`: did the message reach the container?), `outbound.db` (`messages_out`: did the agent produce a response?) |
 
 Note: container logs are lost after the container exits (`--rm` flag). If the agent silently failed inside the container, there's no persistent log to inspect.
+
+**`better-sqlite3` NMV mismatch:** If the service crash-loops with "was compiled against NMV X, requires NMV Y", run `pnpm rebuild better-sqlite3` under the same Node version that launchd uses (check `ProgramArguments` in the plist). Any `pnpm install` under a different Node version recompiles the native addon against that version. **Before rebuilding, confirm the crash is from the v2 service:** a legacy `com.nanoclaw` (v1) plist in `~/Library/LaunchAgents/` runs with a *different* Node and writes to the **same** `logs/nanoclaw.error.log` — it can make v2 look broken when v2 is healthy. Check `launchctl list | grep nanoclaw`: a `com.nanoclaw` entry (no `-v2-` in the label) with non-zero exit is the culprit. Fix: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist && mkdir -p ~/Library/LaunchAgents/disabled && mv ~/Library/LaunchAgents/com.nanoclaw.plist ~/Library/LaunchAgents/disabled/`.
+
+**Credential changes in `.env`:** Channel adapters (e.g. GitHub Octokit) cache credentials at startup — editing `.env` has no effect until you restart. After updating a credential: `cp .env data/env/env` (syncs to the container env mount), then restart the service.
+
+**WhatsApp first-time setup:** Set `WHATSAPP_ENABLED=true` (QR code) or `WHATSAPP_PHONE_NUMBER=<digits, no +>` (pairing code) in `.env`, then `cp .env data/env/env` and restart. After first connect, auth persists at `store/auth/creds.json` (project root — not under `data/`) and the env var is no longer needed.
+
+**WhatsApp auth wiped on restart (symptom: QR code requested after every restart):** Was a bug — the `connection = 'close'` handler in `src/channels/whatsapp.ts` cleared `store/auth/` whenever `shouldReconnect=false`, which is also true on clean shutdown (SIGTERM). Fixed: auth is only cleared when `reason === DisconnectReason.loggedOut`. If you hit this on an older build, re-link once via `WHATSAPP_ENABLED=true` + `cp .env data/env/env` + restart.
+
+**Channel routes messages but agent never replies (sweep loops `Waking container for due messages count=N` every 60 s):** The host is failing to spawn the container. Check `logs/nanoclaw.error.log` for `OneCLI gateway unreachable` or `OneCLIError: fetch failed` on `AgentsClient.createAgent`. Root cause: the OneCLI Podman containers have exited — common after Mac sleep, Podman machine restart, or reboot. The startup log will now include `OneCLI gateway unreachable` with recovery instructions. Fix: check `/opt/homebrew/bin/podman ps -a | grep onecli` — if both `onecli` and `onecli_postgres_1` show Exited, run `cd ~/.onecli && PATH="/opt/homebrew/bin:$PATH" podman-compose up -d` (or `podman rm -f onecli onecli_postgres_1` first if they have conflicting names). Verify: `curl -sSf http://127.0.0.1:10254/`. The next host-sweep tick (within 60 s) will pick up the backlog.
+
+**Additional mount silently rejected on every spawn:** Check `logs/nanoclaw.error.log` for `Additional mount REJECTED … Invalid container path`. Container paths in `additional_mounts` must be **relative** (e.g. `lkshrsch-bot`, not `/workspace/lkshrsch-bot`) — the validator prefixes them with `/workspace/extra/`. Fix: `pnpm exec tsx scripts/q.ts data/v2.db "UPDATE container_configs SET additional_mounts = '<corrected-json>' WHERE agent_group_id = '<id>'"` then `ncl groups restart --id <id>`.
 
 ## Supply Chain Security (pnpm)
 
@@ -317,8 +348,8 @@ grep -q '^INSTALL_CJK_FONTS=' .env && sed -i.bak 's/^INSTALL_CJK_FONTS=.*/INSTAL
 
 # Rebuild and restart so new sessions pick up the new image
 ./container/build.sh
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
-# systemctl --user restart nanoclaw                # Linux
+source setup/lib/install-slug.sh && launchctl kickstart -k gui/$(id -u)/$(launchd_label)   # macOS
+# source setup/lib/install-slug.sh && systemctl --user restart $(systemd_unit)              # Linux
 ```
 
 `container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through as a Docker build-arg. Without CJK fonts, Chromium-rendered screenshots and PDFs containing CJK text show tofu (empty rectangles) instead of characters.

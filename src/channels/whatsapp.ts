@@ -567,7 +567,7 @@ registerChannelAdapter('whatsapp', {
                 });
               }, RECONNECT_DELAY_MS);
             });
-          } else {
+          } else if (reason === DisconnectReason.loggedOut) {
             log.info('WhatsApp logged out');
             // Delete auth credentials immediately. Keeping stale credentials
             // causes the next service restart to attempt authentication with an
@@ -582,6 +582,14 @@ registerChannelAdapter('whatsapp', {
             }
             if (rejectFirstOpen) {
               rejectFirstOpen(new Error('WhatsApp logged out'));
+              rejectFirstOpen = undefined;
+              resolveFirstOpen = undefined;
+            }
+          } else {
+            // Normal shutdown (shuttingDown=true, not a real logout) — preserve
+            // auth so creds survive the restart. Only the loggedOut reason clears.
+            if (rejectFirstOpen) {
+              rejectFirstOpen(new Error('WhatsApp shutting down'));
               rejectFirstOpen = undefined;
               resolveFirstOpen = undefined;
             }

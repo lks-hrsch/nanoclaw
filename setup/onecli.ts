@@ -105,8 +105,8 @@ function writeEnvOnecliUrl(url: string): void {
 // Last-known-good CLI release. Used only if BOTH the upstream installer
 // and the redirect-based version probe fail. Bump deliberately when a
 // new CLI release ships.
-const ONECLI_GATEWAY_VERSION = '1.23.0';
-const ONECLI_CLI_FALLBACK_VERSION = '1.3.0';
+const ONECLI_GATEWAY_VERSION = '1.31.1';
+const ONECLI_CLI_FALLBACK_VERSION = '2.2.0';
 const ONECLI_CLI_REPO = 'onecli/onecli-cli';
 
 function installOnecliCliOnly(): { stdout: string; ok: boolean } {
@@ -276,14 +276,16 @@ function installOnecliCliDirect(): { stdout: string; ok: boolean } {
 }
 
 export async function pollHealth(url: string, timeoutMs: number): Promise<boolean> {
-  // `/api/health` matches the path probe.sh uses — keep them aligned.
+  // Gateway 1.28+ moved from /api to /v1; try /v1/health first, fall back to /api/health.
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${url}/api/health`);
-      if (res.ok) return true;
-    } catch {
-      // not ready yet
+    for (const path of ['/v1/health', '/api/health']) {
+      try {
+        const res = await fetch(`${url}${path}`);
+        if (res.ok) return true;
+      } catch {
+        // not ready yet
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }

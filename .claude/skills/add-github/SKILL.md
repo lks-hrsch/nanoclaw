@@ -64,9 +64,7 @@ pnpm run build
 Log in as your **bot account**, then:
 
 1. Go to [Settings > Developer Settings > Personal Access Tokens](https://github.com/settings/tokens)
-2. Create a **Fine-grained token** with:
-   - Repository access: select the repos you want the bot to monitor
-   - Permissions: **Pull requests** (Read & Write), **Issues** (Read & Write)
+2. Create a **Classic token** (`ghp_...`) with the **`repo`** scope. Classic tokens are more reliable here — fine-grained PATs have a separate "Repository access" selector that is easy to misconfigure (resulting in 403 on comment POST even when permissions look correct).
 3. Copy the token
 
 ### 2. Set up a webhook on each repo

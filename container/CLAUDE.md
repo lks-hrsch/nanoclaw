@@ -10,6 +10,16 @@ Files you create are saved in `/workspace/agent/`. Use this for notes, research,
 
 The file `CLAUDE.local.md` in your workspace is your per-group memory. Record things there that you'll want to remember in future sessions — user preferences, project context, recurring facts. Keep entries short and structured.
 
+## GitHub repositories
+
+Clone any GitHub repo you need into `/workspace/lkshrsch-bot/<repo-name>` — that folder is a RW mount of the host's lkshrsch-bot working tree. Don't clone elsewhere (the rest of the filesystem isn't persistent across spawns).
+
+Operate as the `lkshrsch-bot` GitHub account. After cloning, configure git inside the repo:
+- `git config user.name lkshrsch-bot`
+- `git config user.email <lkshrsch-bot's commit email>` — if you don't have it yet, ask the user once and record it in `CLAUDE.local.md` so future sessions don't re-ask.
+
+Push and pull over HTTPS or `gh`. The OneCLI proxy injects the lkshrsch-bot token automatically — never request or paste a personal access token. If you get a 401/403, follow the `/onecli-gateway` flow.
+
 ## Memory
 
 When the user shares any substantive information with you, it must be stored somewhere you can retrieve it when relevant. If it's information that is pertinent to every single conversation turn it should be put into CLAUDE.local.md. Otherwise, create a system for storing the information depending on its type - e.g. create a file of people that the user mentions so you can keep track or a file of projects. For every file you create, add a concise reference in your CLAUDE.local.md so you'll be able to find it in future conversations. 

@@ -96,7 +96,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
   const promise = spawnContainer(session)
     .then(() => true)
     .catch((err) => {
-      log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
+      const isOneCLIDown =
+        err instanceof Error && err.message.startsWith('OneCLI gateway unreachable');
+      if (isOneCLIDown) {
+        log.error('Cannot spawn container — OneCLI down', { sessionId: session.id, hint: err.message });
+      } else {
+        log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
+      }
       return false;
     })
     .finally(() => {
@@ -429,12 +435,21 @@ async function buildContainerArgs(
   // a transient hard failure: if we can't wire the gateway, we don't spawn.
   // The caller (router or host-sweep) catches the throw, leaves the inbound
   // message pending, and the next sweep tick retries.
-  if (agentIdentifier) {
-    await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-  }
-  const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-  if (!onecliApplied) {
-    throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
+  try {
+    if (agentIdentifier) {
+      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+    }
+    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
+    if (!onecliApplied) {
+      throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'fetch failed') {
+      throw new Error(
+        `OneCLI gateway unreachable at ${ONECLI_URL} — run: cd ~/.onecli && PATH="/opt/homebrew/bin:$PATH" podman-compose up -d`,
+      );
+    }
+    throw err;
   }
   log.info('OneCLI gateway applied', { containerName });
 

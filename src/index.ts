@@ -7,7 +7,7 @@
 import path from 'path';
 
 import { backfillContainerConfigs } from './backfill-container-configs.js';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, ONECLI_URL } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
 import { initDb } from './db/connection.js';
@@ -63,6 +63,37 @@ import { startCliServer, stopCliServer } from './cli/socket-server.js';
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
 import { initChannelAdapters, teardownChannelAdapters, getChannelAdapter } from './channels/channel-registry.js';
 
+function startOneCLIHealthMonitor(): void {
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  async function probe(): Promise<void> {
+    try {
+      const res = await fetch(ONECLI_URL, { signal: AbortSignal.timeout(3000) });
+      if (res.status < 500) {
+        if (timer !== null) {
+          clearInterval(timer);
+          timer = null;
+          log.info('OneCLI gateway ready (recovered)', { url: ONECLI_URL });
+        } else {
+          log.info('OneCLI gateway ready', { url: ONECLI_URL });
+        }
+        return;
+      }
+    } catch {}
+    if (timer === null) {
+      log.error('OneCLI gateway unreachable — agents will not spawn until restored', {
+        url: ONECLI_URL,
+        recovery: 'cd ~/.onecli && PATH="/opt/homebrew/bin:$PATH" podman-compose up -d',
+      });
+      timer = setInterval(() => {
+        probe().catch(() => {});
+      }, 30_000);
+    }
+  }
+
+  probe().catch(() => {});
+}
+
 async function main(): Promise<void> {
   log.info('NanoClaw starting');
 
@@ -85,6 +116,12 @@ async function main(): Promise<void> {
   // 2. Container runtime
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+
+  // 2b. OneCLI gateway health check — emits an ERROR with recovery steps if
+  // the gateway is down, then re-probes every 30 s until it comes back. This
+  // converts the otherwise-silent "sweep loops forever" failure mode into a
+  // visible startup signal. Channel adapters still start so messages buffer.
+  startOneCLIHealthMonitor();
 
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
